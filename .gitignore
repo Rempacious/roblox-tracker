@@ -1,0 +1,9 @@
+# Never commit your config — it contains secrets!
+config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/

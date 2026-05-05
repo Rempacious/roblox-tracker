@@ -1,0 +1,7 @@
+{
+    "discord_webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
+    "roblox_cookie": "",
+    "user_ids": [1, 156],
+    "poll_interval_seconds": 30,
+    "notify_on_start": false
+}
