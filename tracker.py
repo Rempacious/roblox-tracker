@@ -170,13 +170,17 @@ def get_game_info(place_id: int, session: requests.Session) -> dict | None:
 #  DISCORD WEBHOOK
 # ──────────────────────────────────────────────
 
-def send_discord_webhook(webhook_url: str, embed: dict, components: list | None = None):
-    """Send an embed to a Discord webhook, optionally with button components."""
+def send_discord_webhook(webhook_url: str, embed: dict, components: list | None = None, mention_content: str | None = None):
+    """Send an embed to a Discord webhook, optionally with button components and user mentions."""
     payload = {
         "username": "Roblox Tracker",
         "avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Roblox_Logo.svg/1200px-Roblox_Logo.svg.png",
         "embeds": [embed],
     }
+    if mention_content:
+        payload["content"] = mention_content
+        # Required to actually ping the mentioned users
+        payload["allowed_mentions"] = {"users": [uid for uid in mention_content.replace("<@", "").replace(">", "").split() if uid.isdigit()]}
     if components:
         payload["components"] = components
     try:
@@ -311,6 +315,8 @@ def run_tracker():
     user_ids = cfg["user_ids"]
     poll_interval = cfg.get("poll_interval_seconds", 30)
     notify_on_start = cfg.get("notify_on_start", False)
+    mention_ids = cfg.get("mention_user_ids", [])
+    mention_content = " ".join(f"<@{mid}>" for mid in mention_ids) if mention_ids else None
 
     # Create a session (cookie is optional — only needed for private profiles)
     session = requests.Session()
@@ -390,7 +396,7 @@ def run_tracker():
                         avatar_url=cached.get("avatar_url"),
                         game_info=game_info,
                     )
-                    send_discord_webhook(webhook_url, embed, components)
+                    send_discord_webhook(webhook_url, embed, components, mention_content)
                 elif first_poll and notify_on_start:
                     # Send initial status on first poll if configured
                     embed, components = build_status_embed(
