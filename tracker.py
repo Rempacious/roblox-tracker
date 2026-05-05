@@ -7,6 +7,8 @@ rich Discord webhook notifications when their status changes.
 Tracks: Offline → Online → In Game → In Studio transitions.
 """
 
+from __future__ import annotations
+
 import requests
 import time
 import json
