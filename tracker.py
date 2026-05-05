@@ -317,6 +317,7 @@ def run_tracker():
     notify_on_start = cfg.get("notify_on_start", False)
     mention_ids = cfg.get("mention_user_ids", [])
     mention_content = " ".join(f"<@{mid}>" for mid in mention_ids) if mention_ids else None
+    heartbeat_minutes = cfg.get("heartbeat_interval_minutes", 60)
 
     # Create a session (cookie is optional — only needed for private profiles)
     session = requests.Session()
@@ -357,6 +358,10 @@ def run_tracker():
     # ── State: last known presence per user ──
     last_status: dict[int, int] = {}  # user_id → userPresenceType
     first_poll = True
+    start_time = datetime.now(timezone.utc)
+    poll_count = 0
+    last_heartbeat = time.time()
+    heartbeat_interval = heartbeat_minutes * 60  # convert to seconds
 
     # ── Loop ──
     while True:
@@ -413,6 +418,39 @@ def run_tracker():
                 last_status[uid] = new_type
 
             first_poll = False
+            poll_count += 1
+
+            # ── Heartbeat: periodic "still alive" message ──
+            if time.time() - last_heartbeat >= heartbeat_interval:
+                uptime = datetime.now(timezone.utc) - start_time
+                hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+                minutes, secs = divmod(remainder, 60)
+                uptime_str = f"{hours}h {minutes}m {secs}s"
+
+                # Build current status summary
+                status_lines = []
+                for uid in user_ids:
+                    cached = user_cache.get(uid, {})
+                    s = last_status.get(uid, 0)
+                    info = PRESENCE_TYPES.get(s, PRESENCE_TYPES[0])
+                    status_lines.append(f"{info['emoji']} **{cached.get('display_name', uid)}**: {info['label']}")
+
+                heartbeat_embed = {
+                    "title": "💚 Tracker Heartbeat — Still Running",
+                    "description": "\n".join(status_lines) if status_lines else "No users tracked.",
+                    "color": 0x2ECC71,
+                    "fields": [
+                        {"name": "⏱️ Uptime", "value": uptime_str, "inline": True},
+                        {"name": "📊 Total Polls", "value": str(poll_count), "inline": True},
+                        {"name": "👥 Tracking", "value": f"{len(user_ids)} user(s)", "inline": True},
+                    ],
+                    "footer": {"text": "Roblox Profile Tracker"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                send_discord_webhook(webhook_url, heartbeat_embed)
+                last_heartbeat = time.time()
+                print(f"  💚 Heartbeat sent (uptime: {uptime_str})")
+
             print(f"  Next check in {poll_interval}s...\n")
 
         except KeyboardInterrupt:
