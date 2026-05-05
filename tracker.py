@@ -425,7 +425,14 @@ def run_tracker():
                 uptime = datetime.now(timezone.utc) - start_time
                 hours, remainder = divmod(int(uptime.total_seconds()), 3600)
                 minutes, secs = divmod(remainder, 60)
-                uptime_str = f"{hours}h {minutes}m {secs}s"
+
+                # Format uptime nicely
+                if hours > 0:
+                    uptime_str = f"**{hours}**h **{minutes}**m **{secs}**s"
+                elif minutes > 0:
+                    uptime_str = f"**{minutes}**m **{secs}**s"
+                else:
+                    uptime_str = f"**{secs}**s"
 
                 # Build current status summary
                 status_lines = []
@@ -433,23 +440,48 @@ def run_tracker():
                     cached = user_cache.get(uid, {})
                     s = last_status.get(uid, 0)
                     info = PRESENCE_TYPES.get(s, PRESENCE_TYPES[0])
-                    status_lines.append(f"{info['emoji']} **{cached.get('display_name', uid)}**: {info['label']}")
+                    name = cached.get('display_name', uid)
+                    avatar = cached.get('avatar_url', '')
+                    profile = f"https://www.roblox.com/users/{uid}/profile"
+                    status_lines.append(
+                        f"{info['emoji']} **[{name}]({profile})** — {info['label']}"
+                    )
+
+                # Next heartbeat timestamp for Discord's relative time
+                next_hb_unix = int(time.time()) + heartbeat_interval
+                next_hb_str = f"<t:{next_hb_unix}:R>"
+
+                # Pulse bar visual
+                pulse_bar = "```\n💚 ━━━━━━━━━━━━━ PULSE ━━━━━━━━━━━━━ 💚\n```"
 
                 heartbeat_embed = {
-                    "title": "💚 Tracker Heartbeat — Still Running",
-                    "description": "\n".join(status_lines) if status_lines else "No users tracked.",
+                    "author": {
+                        "name": "🟢 TRACKER ONLINE",
+                        "icon_url": "https://em-content.zobj.net/source/telegram/386/green-heart_1f49a.webp",
+                    },
+                    "title": "💚 Heartbeat — All Systems Operational",
+                    "description": pulse_bar + "\n" + "\n".join(status_lines),
                     "color": 0x2ECC71,
+                    "thumbnail": {
+                        "url": "https://em-content.zobj.net/source/telegram/386/beating-heart_1f493.webp",
+                    },
                     "fields": [
                         {"name": "⏱️ Uptime", "value": uptime_str, "inline": True},
-                        {"name": "📊 Total Polls", "value": str(poll_count), "inline": True},
-                        {"name": "👥 Tracking", "value": f"{len(user_ids)} user(s)", "inline": True},
+                        {"name": "📊 Polls", "value": f"**{_format_number(poll_count)}**", "inline": True},
+                        {"name": "👥 Tracking", "value": f"**{len(user_ids)}** user(s)", "inline": True},
+                        {"name": "🔄 Next Heartbeat", "value": next_hb_str, "inline": True},
+                        {"name": "📡 Interval", "value": f"Every **{heartbeat_minutes}** min", "inline": True},
+                        {"name": "🌐 Proxy", "value": "RoTunnel", "inline": True},
                     ],
-                    "footer": {"text": "Roblox Profile Tracker"},
+                    "footer": {
+                        "text": "Roblox Profile Tracker • Heartbeat",
+                        "icon_url": "https://em-content.zobj.net/source/telegram/386/green-heart_1f49a.webp",
+                    },
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
                 send_discord_webhook(webhook_url, heartbeat_embed)
                 last_heartbeat = time.time()
-                print(f"  💚 Heartbeat sent (uptime: {uptime_str})")
+                print(f"  💚 Heartbeat sent (uptime: {hours}h {minutes}m {secs}s)")
 
             print(f"  Next check in {poll_interval}s...\n")
 
