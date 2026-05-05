@@ -170,8 +170,8 @@ def get_game_info(place_id: int, session: requests.Session) -> dict | None:
 #  DISCORD WEBHOOK
 # ──────────────────────────────────────────────
 
-def send_discord_webhook(webhook_url: str, embed: dict, components: list | None = None, mention_content: str | None = None):
-    """Send an embed to a Discord webhook, optionally with button components and user mentions."""
+def send_discord_webhook(webhook_url: str, embed: dict, components: list | None = None, mention_content: str | None = None) -> str | None:
+    """Send an embed to a Discord webhook. Returns the message ID if available."""
     payload = {
         "username": "Roblox Tracker",
         "avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Roblox_Logo.svg/1200px-Roblox_Logo.svg.png",
@@ -179,18 +179,42 @@ def send_discord_webhook(webhook_url: str, embed: dict, components: list | None 
     }
     if mention_content:
         payload["content"] = mention_content
-        # Required to actually ping the mentioned users
         payload["allowed_mentions"] = {"users": [uid for uid in mention_content.replace("<@", "").replace(">", "").split() if uid.isdigit()]}
     if components:
         payload["components"] = components
     try:
-        r = requests.post(webhook_url, json=payload, timeout=10)
+        # Use ?wait=true to get the message object back (with its ID)
+        r = requests.post(webhook_url + "?wait=true", json=payload, timeout=10)
         if r.status_code in (200, 204):
             print("  [DISCORD] Webhook sent ✓")
+            try:
+                return r.json().get("id")
+            except Exception:
+                return None
         else:
             print(f"  [DISCORD] Webhook failed ({r.status_code}): {r.text[:200]}")
     except requests.RequestException as e:
         print(f"  [DISCORD] Webhook error: {e}")
+    return None
+
+
+def edit_discord_webhook(webhook_url: str, message_id: str, embed: dict) -> bool:
+    """Edit an existing webhook message by its ID."""
+    payload = {"embeds": [embed]}
+    try:
+        r = requests.patch(
+            f"{webhook_url}/messages/{message_id}",
+            json=payload,
+            timeout=10,
+        )
+        if r.status_code in (200, 204):
+            print("  [DISCORD] Heartbeat updated ✓")
+            return True
+        else:
+            print(f"  [DISCORD] Edit failed ({r.status_code}): {r.text[:200]}")
+    except requests.RequestException as e:
+        print(f"  [DISCORD] Edit error: {e}")
+    return False
 
 
 def _format_number(n: int) -> str:
@@ -362,6 +386,7 @@ def run_tracker():
     poll_count = 0
     last_heartbeat = time.time()
     heartbeat_interval = heartbeat_minutes * 60  # convert to seconds
+    heartbeat_message_id = None  # track the heartbeat message for editing
 
     # ── Loop ──
     while True:
@@ -479,9 +504,16 @@ def run_tracker():
                     },
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
-                send_discord_webhook(webhook_url, heartbeat_embed)
+                # Edit existing heartbeat message, or send a new one
+                if heartbeat_message_id:
+                    success = edit_discord_webhook(webhook_url, heartbeat_message_id, heartbeat_embed)
+                    if not success:
+                        # Message was deleted or expired — send a new one
+                        heartbeat_message_id = send_discord_webhook(webhook_url, heartbeat_embed)
+                else:
+                    heartbeat_message_id = send_discord_webhook(webhook_url, heartbeat_embed)
                 last_heartbeat = time.time()
-                print(f"  💚 Heartbeat sent (uptime: {hours}h {minutes}m {secs}s)")
+                print(f"  💚 Heartbeat {'updated' if heartbeat_message_id else 'sent'} (uptime: {hours}h {minutes}m {secs}s)")
 
             print(f"  Next check in {poll_interval}s...\n")
 
