@@ -166,6 +166,35 @@ def get_game_info(place_id: int, session: requests.Session) -> dict | None:
     return None
 
 
+def get_friend_count(user_id: int, session: requests.Session) -> int | None:
+    """Fetch the user's friend count."""
+    try:
+        r = session.get(
+            f"https://friends.rotunnel.com/v1/users/{user_id}/friends/count",
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json().get("count")
+    except requests.RequestException:
+        pass
+    return None
+
+
+def get_recent_badges(user_id: int, session: requests.Session) -> list[dict]:
+    """Fetch the user's most recently earned badges (latest 10)."""
+    try:
+        r = session.get(
+            f"https://badges.rotunnel.com/v1/users/{user_id}/badges",
+            params={"limit": 10, "sortOrder": "Desc"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json().get("data", [])
+    except requests.RequestException:
+        pass
+    return []
+
+
 # ──────────────────────────────────────────────
 #  DISCORD WEBHOOK
 # ──────────────────────────────────────────────
@@ -381,6 +410,8 @@ def run_tracker():
 
     # ── State: last known presence per user ──
     last_status: dict[int, int] = {}  # user_id → userPresenceType
+    last_friend_count: dict[int, int] = {}  # user_id → friend count
+    last_badge_ids: dict[int, set] = {}  # user_id → set of known badge IDs
     first_poll = True
     start_time = datetime.now(timezone.utc)
     poll_count = 0
@@ -441,6 +472,96 @@ def run_tracker():
                     send_discord_webhook(webhook_url, embed, components)
 
                 last_status[uid] = new_type
+
+            # ── Check friend count & badges for all users ──
+            for uid in user_ids:
+                cached = user_cache.get(uid, {})
+                display = cached.get('display_name', f'User_{uid}')
+                username = cached.get('username', f'User_{uid}')
+                avatar = cached.get('avatar_url')
+                profile_url = f"https://www.roblox.com/users/{uid}/profile"
+
+                # — Friend count —
+                friend_count = get_friend_count(uid, session)
+                if friend_count is not None:
+                    old_count = last_friend_count.get(uid)
+                    if old_count is not None and friend_count != old_count:
+                        delta = friend_count - old_count
+                        delta_str = f"+{delta}" if delta > 0 else str(delta)
+                        emoji = "📈" if delta > 0 else "📉"
+                        color = 0x2ECC71 if delta > 0 else 0xE74C3C
+
+                        friend_embed = {
+                            "title": f"{emoji} {display}'s Friend Count Changed",
+                            "description": f"**[@{username}]({profile_url})** (ID: `{uid}`)",
+                            "url": profile_url,
+                            "color": color,
+                            "fields": [
+                                {"name": "Previous", "value": f"**{_format_number(old_count)}**", "inline": True},
+                                {"name": "Current", "value": f"**{_format_number(friend_count)}**", "inline": True},
+                                {"name": "Change", "value": f"**{delta_str}**", "inline": True},
+                            ],
+                            "footer": {"text": "Roblox Profile Tracker • Friends"},
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        if avatar:
+                            friend_embed["thumbnail"] = {"url": avatar}
+                        send_discord_webhook(webhook_url, friend_embed, mention_content=mention_content)
+                        print(f"  {emoji} {display}: Friends {old_count} → {friend_count} ({delta_str})")
+                    last_friend_count[uid] = friend_count
+
+                # — Badges —
+                badges = get_recent_badges(uid, session)
+                if badges:
+                    current_ids = {b.get("id") for b in badges if b.get("id")}
+                    old_ids = last_badge_ids.get(uid)
+
+                    if old_ids is not None:
+                        new_badge_ids = current_ids - old_ids
+                        if new_badge_ids:
+                            # Find the new badge objects
+                            new_badges = [b for b in badges if b.get("id") in new_badge_ids]
+                            for badge in new_badges:
+                                badge_name = badge.get("name", "Unknown Badge")
+                                badge_desc = (badge.get("description") or "No description.")[:200]
+                                badge_icon_id = badge.get("iconImageId")
+
+                                # Try to get badge icon thumbnail
+                                badge_icon_url = None
+                                if badge_icon_id:
+                                    try:
+                                        ri = session.get(
+                                            "https://thumbnails.rotunnel.com/v1/badges/icons",
+                                            params={"badgeIds": badge.get("id"), "size": "150x150", "format": "Png"},
+                                            timeout=10,
+                                        )
+                                        if ri.status_code == 200:
+                                            tdata = ri.json().get("data", [])
+                                            if tdata and tdata[0].get("imageUrl"):
+                                                badge_icon_url = tdata[0]["imageUrl"]
+                                    except requests.RequestException:
+                                        pass
+
+                                badge_embed = {
+                                    "title": f"🏅 {display} earned a new badge!",
+                                    "description": f"**[@{username}]({profile_url})** (ID: `{uid}`)",
+                                    "url": profile_url,
+                                    "color": 0xF1C40F,
+                                    "fields": [
+                                        {"name": "🏅 Badge Name", "value": f"**{badge_name}**", "inline": False},
+                                        {"name": "📝 Description", "value": badge_desc, "inline": False},
+                                    ],
+                                    "footer": {"text": "Roblox Profile Tracker • Badges"},
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                }
+                                if avatar:
+                                    badge_embed["thumbnail"] = {"url": avatar}
+                                if badge_icon_url:
+                                    badge_embed["image"] = {"url": badge_icon_url}
+                                send_discord_webhook(webhook_url, badge_embed, mention_content=mention_content)
+                                print(f"  🏅 {display}: New badge — {badge_name}")
+
+                    last_badge_ids[uid] = current_ids
 
             first_poll = False
             poll_count += 1
