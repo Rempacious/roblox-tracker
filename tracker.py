@@ -14,13 +14,16 @@ import time
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 # ──────────────────────────────────────────────
 #  CONFIGURATION — Edit config.json instead
 # ──────────────────────────────────────────────
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+BOT_HOSTING_BILLING_URL = "https://bot-hosting.net/a/billings"
 
 PRESENCE_TYPES = {
     0: {"label": "Offline",        "emoji": "🔴", "color": 0x808080},
@@ -246,6 +249,78 @@ def edit_discord_webhook(webhook_url: str, message_id: str, embed: dict) -> bool
     return False
 
 
+class BotHostingRenewalReminder:
+    """Send a reminder for the configured deadline and remember its delivery."""
+
+    def __init__(self, deadline: datetime, state_path: Path):
+        self.deadline = deadline
+        self.state_path = state_path
+        self.deadline_key = deadline.isoformat()
+        self.next_attempt = 0.0
+        self.sent = False
+        try:
+            self.sent = state_path.read_text(encoding="utf-8").strip() == self.deadline_key
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeError) as error:
+            print(f"  [WARN] Could not read renewal reminder state: {error}")
+
+    def check(self, webhook_url: str, mention_content: str | None) -> None:
+        time_left = self.deadline - datetime.now(timezone.utc)
+        if self.sent or not timedelta(0) < time_left <= timedelta(hours=24):
+            return
+
+        now = time.monotonic()
+        if now < self.next_attempt:
+            return
+        self.next_attempt = now + 300
+
+        expiry = int(self.deadline.timestamp())
+        embed = {
+            "title": "Renew your Bot-Hosting.net plan",
+            "url": BOT_HOSTING_BILLING_URL,
+            "description": (
+                f"Your free plan expires <t:{expiry}:R> (<t:{expiry}:F>).\n\n"
+                f"[Open Bot-Hosting.net Billing]({BOT_HOSTING_BILLING_URL}) "
+                "and select **Renew free plan**."
+            ),
+            "color": 0xFEE75C,
+        }
+        if not send_discord_webhook(webhook_url, embed, mention_content=mention_content):
+            return
+
+        self.sent = True
+        try:
+            with TemporaryDirectory(dir=self.state_path.parent) as directory:
+                temporary_path = Path(directory) / self.state_path.name
+                temporary_path.write_text(self.deadline_key, encoding="utf-8")
+                temporary_path.replace(self.state_path)
+        except OSError as error:
+            print(f"  [WARN] Could not save renewal reminder state: {error}")
+
+
+def load_bot_hosting_reminder(cfg: dict) -> BotHostingRenewalReminder | None:
+    value = cfg.get("bot_hosting_renewal_deadline")
+    if value is None or value == "":
+        return None
+
+    try:
+        if not isinstance(value, str):
+            raise ValueError
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        deadline = datetime.fromisoformat(value)
+        if deadline.tzinfo is None:
+            raise ValueError
+        deadline = deadline.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        print("  [WARN] bot_hosting_renewal_deadline needs an ISO 8601 timestamp with a timezone.")
+        return None
+
+    state_path = Path(CONFIG_PATH).with_name(".bot-hosting-renewal-reminder")
+    return BotHostingRenewalReminder(deadline, state_path)
+
+
 def _format_number(n: int) -> str:
     """Format large numbers: 1234567 → 1.2M, 12345 → 12.3K."""
     if n >= 1_000_000_000:
@@ -371,6 +446,7 @@ def run_tracker():
     mention_ids = cfg.get("mention_user_ids", [])
     mention_content = " ".join(f"<@{mid}>" for mid in mention_ids) if mention_ids else None
     heartbeat_minutes = cfg.get("heartbeat_interval_minutes", 60)
+    renewal_reminder = load_bot_hosting_reminder(cfg)
 
     # Create a session (cookie is optional — only needed for private profiles)
     session = requests.Session()
@@ -422,6 +498,9 @@ def run_tracker():
     # ── Loop ──
     while True:
         try:
+            if renewal_reminder is not None:
+                renewal_reminder.check(webhook_url, mention_content)
+
             now = datetime.now().strftime("%H:%M:%S")
             print(f"[{now}] Polling presence...")
 

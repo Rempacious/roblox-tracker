@@ -1,5 +1,6 @@
 # Never commit your config — it contains secrets!
 config.json
+.bot-hosting-renewal-reminder
 
 # Python
 __pycache__/

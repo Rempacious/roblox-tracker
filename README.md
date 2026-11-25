@@ -39,3 +39,17 @@ python tracker.py
 | `user_ids` | int[] | *required* | Roblox user IDs to monitor |
 | `poll_interval_seconds` | int | `30` | Seconds between checks |
 | `notify_on_start` | bool | `false` | Send status on first poll |
+| `bot_hosting_renewal_deadline` | string | `""` | Optional Bot-Hosting.net expiry timestamp with a timezone offset |
+
+## Bot-Hosting.net renewal reminders
+
+Enter the expiry shown on Bot-Hosting.net Billing in your deployment's `config.json`.
+Use a timestamp with a timezone offset, such as `2026-11-29T17:00:00+08:00`.
+Restart the tracker after saving. During the final 24 hours before expiry, the
+tracker posts a reminder to its Discord webhook with a link to Billing. If you
+already use `mention_user_ids`, the reminder mentions those users.
+[Bot-Hosting.net Billing](https://bot-hosting.net/a/billings)
+
+After renewing, enter the new expiry in `config.json` and restart the tracker.
+Keep `.bot-hosting-renewal-reminder` next to `config.json` so ordinary restarts
+can remember which deadline already received a reminder.
